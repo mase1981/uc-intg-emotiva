@@ -1,0 +1,98 @@
+{
+  "driver_id": "emotiva",
+  "version": "1.0.0",
+  "min_core_api": "1.0.0",
+  "name": {
+    "en": "Emotiva Processor"
+  },
+  "icon": "uc:integration",
+  "description": {
+    "en": "Control Emotiva video processors (XMC-1, XMC-2, RMC-1, RMC-1L) with comprehensive media player and remote control functionality."
+  },
+  "developer": {
+    "name": "Meir Miyara",
+    "email": "meir.miyara@gmail.com",
+    "url": "https://github.com/mase1981/uc-intg-emotiva"
+  },
+  "home_page": "https://github.com/mase1981/uc-intg-emotiva",
+  "setup_data_schema": {
+    "title": {
+      "en": "Emotiva Processor Setup"
+    },
+    "settings": [
+      {
+        "id": "setup_mode",
+        "label": {
+          "en": "Setup Mode"
+        },
+        "field": {
+          "dropdown": {
+            "value": "discover",
+            "items": [
+              {
+                "id": "discover",
+                "label": {
+                  "en": "Auto-Discover Devices"
+                }
+              },
+              {
+                "id": "manual",
+                "label": {
+                  "en": "Manual Configuration"
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "host",
+        "label": {
+          "en": "IP Address"
+        },
+        "description": {
+          "en": "IP address of your Emotiva processor (only used in manual mode)"
+        },
+        "field": {
+          "text": {
+            "value": "192.168.1.100"
+          }
+        }
+      },
+      {
+        "id": "control_port",
+        "label": {
+          "en": "Control Port"
+        },
+        "description": {
+          "en": "Control port (default: 7002)"
+        },
+        "field": {
+          "number": {
+            "value": 7002,
+            "min": 1,
+            "max": 65535
+          }
+        }
+      },
+      {
+        "id": "notify_port",
+        "label": {
+          "en": "Notification Port"
+        },
+        "description": {
+          "en": "Notification port (default: 7003)"
+        },
+        "field": {
+          "number": {
+            "value": 7003,
+            "min": 1,
+            "max": 65535
+          }
+        }
+      }
+    ]
+  },
+  "release_date": "2025-01-13",
+  "icon": "uc:cloud-music"
+}
