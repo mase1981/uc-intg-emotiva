@@ -1,11 +1,11 @@
 {
   "driver_id": "emotiva",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "min_core_api": "1.0.0",
   "name": {
     "en": "Emotiva Processor"
   },
-  "icon": "uc:integration",
+  "icon": "uc:cloud-music",
   "description": {
     "en": "Control Emotiva video processors (XMC-1, XMC-2, RMC-1, RMC-1L) with comprehensive media player and remote control functionality."
   },
@@ -93,6 +93,5 @@
       }
     ]
   },
-  "release_date": "2025-01-13",
-  "icon": "uc:cloud-music"
+  "release_date": "2025-01-13"
 }
