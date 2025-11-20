@@ -38,11 +38,11 @@ class EmotivaRemote(Remote):
         }
         
         simple_commands = [
-            "power_on", "power_off", "power_toggle",
+            "power_on", "power_off",
             "volume_up", "volume_down", "mute",
-            "menu", "back", "home", "info",
+            "menu", "home", "info", "exit",
             "cursor_up", "cursor_down", "cursor_left", "cursor_right", "cursor_enter",
-            "channel_up", "channel_down",
+            "input_next", "input_previous",
             "digit_0", "digit_1", "digit_2", "digit_3", "digit_4",
             "digit_5", "digit_6", "digit_7", "digit_8", "digit_9",
             "function_red", "function_green", "function_yellow", "function_blue",
@@ -62,7 +62,6 @@ class EmotivaRemote(Remote):
         _LOG.info(f"Created remote entity: {entity_id}")
 
     def _on_device_update(self):
-        """Handle device state updates."""
         _LOG.debug(f"Remote update callback for {self.id}")
         
         try:
@@ -82,7 +81,6 @@ class EmotivaRemote(Remote):
             _LOG.error(f"Error in remote update callback: {e}", exc_info=True)
 
     async def push_update(self):
-        """Push entity state update to remote."""
         try:
             await self._client.update_events(["power"])
             self._on_device_update()
@@ -132,21 +130,20 @@ class EmotivaRemote(Remote):
         command_map = {
             "power_on": "power_on",
             "power_off": "power_off",
-            "power_toggle": None,
             "volume_up": "volume",
             "volume_down": "volume",
             "mute": "mute",
             "menu": "menu",
-            "back": "back",
             "home": "home",
             "info": "info",
+            "exit": "exit",
             "cursor_up": "up",
             "cursor_down": "down",
             "cursor_left": "left",
             "cursor_right": "right",
             "cursor_enter": "enter",
-            "channel_up": "channel_up",
-            "channel_down": "channel_down",
+            "input_next": "input_next",
+            "input_previous": "input_previous",
             "digit_0": "digit_0",
             "digit_1": "digit_1",
             "digit_2": "digit_2",
@@ -166,10 +163,7 @@ class EmotivaRemote(Remote):
         emotiva_cmd = command_map.get(command)
         
         if emotiva_cmd is None:
-            if command == "power_toggle":
-                await self._client.power_toggle()
-            else:
-                _LOG.warning(f"Unknown simple command: {command}")
+            _LOG.warning(f"Unknown simple command: {command}")
         elif command == "volume_up":
             await self._client.send_command("volume", "1")
         elif command == "volume_down":

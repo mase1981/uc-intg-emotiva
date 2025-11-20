@@ -8,7 +8,7 @@ Emotiva integration driver for Unfolded Circle Remote.
 import asyncio
 import logging
 import os
-from typing import Dict, List
+from typing import Dict, List, Any
 
 import ucapi
 from ucapi import DeviceStates, Events, StatusCodes, IntegrationSetupError, SetupComplete, SetupError, RequestUserInput, UserDataResponse
@@ -25,6 +25,7 @@ media_players: Dict[str, EmotivaMediaPlayer] = {}
 remotes: Dict[str, EmotivaRemote] = {}
 entities_ready: bool = False
 initialization_lock: asyncio.Lock = asyncio.Lock()
+setup_state = {"step": "initial", "device_count": 1, "devices_data": []}
 
 _LOG = logging.getLogger(__name__)
 
@@ -107,187 +108,158 @@ async def _initialize_integration():
 
 
 async def setup_handler(msg: ucapi.SetupDriver) -> ucapi.SetupAction:
-    global config, entities_ready
+    global config, entities_ready, setup_state
 
     if isinstance(msg, ucapi.DriverSetupRequest):
-        setup_mode = msg.setup_data.get("setup_mode", "discover")
+        device_count = int(msg.setup_data.get("device_count", 1))
         
-        if setup_mode == "discover":
-            return await _handle_discovery_setup()
+        if device_count == 1:
+            return await _handle_single_device_setup(msg.setup_data)
         else:
-            return await _handle_manual_setup(msg.setup_data)
+            setup_state = {"step": "collect_ips", "device_count": device_count, "devices_data": []}
+            return await _request_device_ips(device_count)
     
     elif isinstance(msg, UserDataResponse):
-        return await _handle_device_selection(msg.input_values)
+        if setup_state["step"] == "collect_ips":
+            return await _handle_device_ips_collection(msg.input_values)
 
     return SetupError(IntegrationSetupError.OTHER)
 
 
-async def _handle_discovery_setup() -> ucapi.SetupAction:
-    try:
-        _LOG.info("Starting device discovery...")
-        discovered_devices = await EmotivaClient.discover(timeout=3)
-        
-        if not discovered_devices or len(discovered_devices) == 0:
-            _LOG.warning("No Emotiva devices discovered")
-            return SetupError(IntegrationSetupError.NOT_FOUND)
-        
-        _LOG.info(f"Discovered {len(discovered_devices)} device(s)")
-        
-        settings = []
-        for idx, (ip, xml_resp) in enumerate(discovered_devices):
-            name = "Unknown"
-            model = "Unknown"
-            control_port = 7002
-            notify_port = 7003
-            protocol_version = 3.0
-            
-            try:
-                name_elem = xml_resp.find("name")
-                if name_elem is not None:
-                    name = name_elem.text.strip()
-                
-                model_elem = xml_resp.find("model")
-                if model_elem is not None:
-                    model = model_elem.text.strip()
-                
-                ctrl = xml_resp.find("control")
-                if ctrl is not None:
-                    version_elem = ctrl.find("version")
-                    if version_elem is not None:
-                        protocol_version = float(version_elem.text)
-                    
-                    ctrl_port_elem = ctrl.find("controlPort")
-                    if ctrl_port_elem is not None:
-                        control_port = int(ctrl_port_elem.text)
-                    
-                    notify_port_elem = ctrl.find("notifyPort")
-                    if notify_port_elem is not None:
-                        notify_port = int(notify_port_elem.text)
-            
-            except Exception as e:
-                _LOG.error(f"Error parsing device info: {e}")
-            
-            settings.append({
-                "id": f"device_{idx}_select",
-                "label": {"en": f"{name} ({model}) at {ip}"},
-                "description": {"en": f"Add this device to your configuration"},
-                "field": {
-                    "checkbox": {
-                        "value": True
-                    }
-                }
-            })
-            
-            settings.append({
-                "id": f"device_{idx}_data",
-                "label": {"en": "Device Data"},
-                "field": {
-                    "text": {
-                        "value": f"{ip}|{name}|{model}|{control_port}|{notify_port}|{protocol_version}"
-                    }
-                }
-            })
-        
-        return RequestUserInput(
-            title={"en": f"Select Emotiva Devices ({len(discovered_devices)} found)"},
-            settings=settings
-        )
-        
-    except Exception as e:
-        _LOG.error(f"Discovery error: {e}", exc_info=True)
+async def _handle_single_device_setup(setup_data: Dict[str, Any]) -> ucapi.SetupAction:
+    host = setup_data.get("host", "").strip()
+    control_port = int(setup_data.get("control_port", 7002))
+    notify_port = int(setup_data.get("notify_port", 7003))
+    
+    if not host:
+        _LOG.error("No host provided")
         return SetupError(IntegrationSetupError.OTHER)
-
-
-async def _handle_manual_setup(setup_data: Dict) -> ucapi.SetupAction:
+    
+    _LOG.info(f"Testing connection to {host}")
+    
+    device_config = DeviceConfig(
+        device_id=f"emotiva_{host.replace('.', '_')}",
+        name=f"Emotiva Processor ({host})",
+        ip_address=host,
+        model="Unknown",
+        control_port=control_port,
+        notify_port=notify_port,
+        protocol_version=3.0
+    )
+    
+    test_client = EmotivaClient(device_config)
     try:
-        host = setup_data.get("host", "").strip()
-        control_port = int(setup_data.get("control_port", 7002))
-        notify_port = int(setup_data.get("notify_port", 7003))
-        
-        if not host:
-            _LOG.error("No host provided")
-            return SetupError(IntegrationSetupError.OTHER)
-        
-        _LOG.info(f"Testing manual connection to {host}")
-        
-        device_config = DeviceConfig(
-            device_id=f"emotiva_{host.replace('.', '_')}",
-            name=f"Emotiva Processor ({host})",
-            ip_address=host,
-            model="Unknown",
-            control_port=control_port,
-            notify_port=notify_port,
-            protocol_version=3.0
-        )
-        
-        test_client = EmotivaClient(device_config)
-        try:
-            connection_success = await test_client.test_connection()
-        finally:
-            await test_client.close()
-        
-        if not connection_success:
-            _LOG.error(f"Connection test failed for {host}")
-            return SetupError(IntegrationSetupError.CONNECTION_REFUSED)
-        
-        config.add_device(device_config)
-        await _initialize_integration()
-        return SetupComplete()
-        
-    except Exception as e:
-        _LOG.error(f"Manual setup error: {e}", exc_info=True)
-        return SetupError(IntegrationSetupError.OTHER)
+        connection_success = await test_client.test_connection()
+    finally:
+        await test_client.close()
+    
+    if not connection_success:
+        _LOG.error(f"Connection test failed for {host}")
+        return SetupError(IntegrationSetupError.CONNECTION_REFUSED)
+    
+    config.add_device(device_config)
+    await _initialize_integration()
+    return SetupComplete()
 
 
-async def _handle_device_selection(input_values: Dict) -> ucapi.SetupAction:
-    try:
-        selected_devices = []
+async def _request_device_ips(device_count: int) -> RequestUserInput:
+    settings = []
+    
+    for i in range(device_count):
+        settings.extend([
+            {
+                "id": f"device_{i}_ip",
+                "label": {"en": f"Device {i+1} IP Address"},
+                "description": {"en": f"IP address for Emotiva processor {i+1} (e.g., 192.168.1.{100+i})"},
+                "field": {"text": {"value": f"192.168.1.{100+i}"}}
+            },
+            {
+                "id": f"device_{i}_name", 
+                "label": {"en": f"Device {i+1} Name"},
+                "description": {"en": f"Friendly name for device {i+1}"},
+                "field": {"text": {"value": f"Emotiva Processor {i+1}"}}
+            }
+        ])
+    
+    return RequestUserInput(
+        title={"en": f"Configure {device_count} Emotiva Processors"},
+        settings=settings
+    )
+
+
+async def _handle_device_ips_collection(input_values: Dict[str, Any]) -> ucapi.SetupAction:
+    devices_to_test = []
+    
+    device_index = 0
+    while f"device_{device_index}_ip" in input_values:
+        ip_input = input_values[f"device_{device_index}_ip"]
+        name = input_values[f"device_{device_index}_name"]
         
-        device_idx = 0
-        while f"device_{device_idx}_select" in input_values:
-            selected = input_values.get(f"device_{device_idx}_select", False)
-            
-            if selected:
-                device_data_str = input_values.get(f"device_{device_idx}_data", "")
-                parts = device_data_str.split("|")
-                
-                if len(parts) >= 6:
-                    ip = parts[0]
-                    name = parts[1]
-                    model = parts[2]
-                    control_port = int(parts[3])
-                    notify_port = int(parts[4])
-                    protocol_version = float(parts[5])
-                    
-                    device_config = DeviceConfig(
-                        device_id=f"emotiva_{ip.replace('.', '_')}",
-                        name=name,
-                        ip_address=ip,
-                        model=model,
-                        control_port=control_port,
-                        notify_port=notify_port,
-                        protocol_version=protocol_version
-                    )
-                    
-                    selected_devices.append(device_config)
-            
-            device_idx += 1
-        
-        if len(selected_devices) == 0:
-            _LOG.error("No devices selected")
-            return SetupError(IntegrationSetupError.OTHER)
-        
-        for device_config in selected_devices:
+        devices_to_test.append({
+            "host": ip_input.strip(),
+            "name": name.strip(),
+            "index": device_index
+        })
+        device_index += 1
+    
+    _LOG.info(f"Testing connections to {len(devices_to_test)} devices...")
+    test_results = await _test_multiple_devices(devices_to_test)
+    
+    successful_devices = 0
+    for device_data, success in zip(devices_to_test, test_results):
+        if success:
+            device_id = f"emotiva_{device_data['host'].replace('.', '_')}"
+            device_config = DeviceConfig(
+                device_id=device_id,
+                name=device_data['name'],
+                ip_address=device_data['host'],
+                model="Unknown",
+                control_port=7002,
+                notify_port=7003,
+                protocol_version=3.0
+            )
             config.add_device(device_config)
-        
-        await _initialize_integration()
-        _LOG.info(f"Setup completed with {len(selected_devices)} device(s)")
-        return SetupComplete()
-        
-    except Exception as e:
-        _LOG.error(f"Device selection error: {e}", exc_info=True)
-        return SetupError(IntegrationSetupError.OTHER)
+            successful_devices += 1
+            _LOG.info(f"✅ Device {device_data['index'] + 1} ({device_data['name']}) connection successful")
+        else:
+            _LOG.error(f"❌ Device {device_data['index'] + 1} ({device_data['name']}) connection failed")
+    
+    if successful_devices == 0:
+        _LOG.error("No devices could be connected")
+        return SetupError(IntegrationSetupError.CONNECTION_REFUSED)
+    
+    await _initialize_integration()
+    _LOG.info(f"Multi-device setup completed: {successful_devices}/{len(devices_to_test)} devices configured")
+    return SetupComplete()
+
+
+async def _test_multiple_devices(devices: List[Dict]) -> List[bool]:
+    async def test_device(device_data):
+        try:
+            device_config = DeviceConfig(
+                device_id=f"temp_{device_data['index']}",
+                name=device_data['name'],
+                ip_address=device_data['host'],
+                model="Unknown",
+                control_port=7002,
+                notify_port=7003
+            )
+            
+            client = EmotivaClient(device_config)
+            success = await client.test_connection()
+            await client.close()
+            
+            if success:
+                _LOG.info(f"Device {device_data['index'] + 1}: Connection successful")
+            return success
+        except Exception as e:
+            _LOG.error(f"Device {device_data['index'] + 1} test error: {e}")
+            return False
+    
+    tasks = [test_device(device) for device in devices]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    return [result if isinstance(result, bool) else False for result in results]
 
 
 async def on_subscribe_entities(entity_ids: List[str]):
@@ -400,5 +372,4 @@ if __name__ == "__main__":
         _LOG.info("Integration stopped by user")
     except Exception as e:
         _LOG.error(f"Integration failed: {e}")
-        raise
         raise
