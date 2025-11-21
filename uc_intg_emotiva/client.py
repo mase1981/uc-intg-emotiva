@@ -337,6 +337,12 @@ class EmotivaClient:
             await asyncio.sleep(0.25)
             await self.send_command("movie")
 
+
+    async def input_next(self):
+        await self.send_command("input_next")
+    
+    async def input_previous(self):
+        await self.send_command("input_previous")
     def set_notify_callback(self, callback: Callable):
         self._notify_callback = callback
 
