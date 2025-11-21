@@ -337,12 +337,57 @@ class EmotivaClient:
             await asyncio.sleep(0.25)
             await self.send_command("movie")
 
-
     async def input_next(self):
         await self.send_command("input_next")
     
     async def input_previous(self):
         await self.send_command("input_previous")
+    
+    async def menu(self):
+        await self.send_command("menu")
+    
+    async def back(self):
+        await self.send_command("back")
+    
+    async def exit_menu(self):
+        await self.send_command("exit")
+    
+    async def home(self):
+        await self.send_command("home")
+    
+    async def info(self):
+        await self.send_command("info")
+    
+    async def up(self):
+        await self.send_command("up")
+    
+    async def down(self):
+        await self.send_command("down")
+    
+    async def left(self):
+        await self.send_command("left")
+    
+    async def right(self):
+        await self.send_command("right")
+    
+    async def enter(self):
+        await self.send_command("enter")
+    
+    async def channel_up(self):
+        await self.send_command("channel_up")
+    
+    async def channel_down(self):
+        await self.send_command("channel_down")
+    
+    async def digit(self, number: int):
+        if 0 <= number <= 9:
+            await self.send_command(f"digit_{number}")
+    
+    async def function_button(self, color: str):
+        valid_colors = ["red", "green", "yellow", "blue"]
+        if color.lower() in valid_colors:
+            await self.send_command(color.lower())
+
     def set_notify_callback(self, callback: Callable):
         self._notify_callback = callback
 
