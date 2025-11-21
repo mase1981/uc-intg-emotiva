@@ -32,8 +32,11 @@ class EmotivaClient:
         self._model = device_config.model
         
         self._udp_stream = None
+        self._notify_socket = None
+        self._notify_task = None
         self._notify_callback: Optional[Callable] = None
         self._current_state: Dict[str, Any] = {}
+        self._stop_notification_loop = False
         
         self._volume_max = 11
         self._volume_min = -96
@@ -243,6 +246,65 @@ class EmotivaClient:
             except Exception as reconnect_error:
                 _LOG.error(f"Reconnection failed: {reconnect_error}")
 
+    async def start_notification_listener(self):
+        """Start listening for notifications on UDP port 7003"""
+        try:
+            loop = asyncio.get_event_loop()
+            self._notify_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._notify_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._notify_socket.bind(("", self._notify_port))
+            self._notify_socket.setblocking(False)
+            
+            _LOG.info(f"Notification listener started on port {self._notify_port} for {self._name}")
+            
+            self._stop_notification_loop = False
+            self._notify_task = asyncio.create_task(self._notification_loop())
+            
+        except Exception as e:
+            _LOG.error(f"Failed to start notification listener: {e}")
+            raise
+
+    async def _notification_loop(self):
+        """Continuously receive and process notifications"""
+        _LOG.info(f"Notification loop started for {self._name}")
+        loop = asyncio.get_event_loop()
+        
+        while not self._stop_notification_loop:
+            try:
+                data, addr = await loop.sock_recvfrom(self._notify_socket, 4096)
+                
+                if addr[0] == self._ip:
+                    _LOG.debug(f"Received notification from {addr}: {len(data)} bytes")
+                    self.handle_notification(data)
+                    
+            except asyncio.CancelledError:
+                _LOG.info(f"Notification loop cancelled for {self._name}")
+                break
+            except Exception as e:
+                _LOG.error(f"Error in notification loop: {e}")
+                await asyncio.sleep(1)
+        
+        _LOG.info(f"Notification loop stopped for {self._name}")
+
+    async def stop_notification_listener(self):
+        """Stop the notification listener"""
+        _LOG.info(f"Stopping notification listener for {self._name}")
+        self._stop_notification_loop = True
+        
+        if self._notify_task:
+            self._notify_task.cancel()
+            try:
+                await self._notify_task
+            except asyncio.CancelledError:
+                pass
+            self._notify_task = None
+        
+        if self._notify_socket:
+            self._notify_socket.close()
+            self._notify_socket = None
+        
+        _LOG.info(f"Notification listener stopped for {self._name}")
+
     async def subscribe_events(self):
         _LOG.debug(f"Subscribing to events: {self._notify_events}")
         msg = self.format_request(
@@ -251,6 +313,8 @@ class EmotivaClient:
             {"protocol": "3.0"} if self._protocol_version == 3.0 else {}
         )
         await self._udp_send(msg)
+        
+        await self.start_notification_listener()
 
     async def unsubscribe_events(self):
         _LOG.debug(f"Unsubscribing from events: {self._all_events}")
@@ -261,6 +325,8 @@ class EmotivaClient:
         )
         await self._udp_send(msg)
         await asyncio.sleep(0.5)
+        
+        await self.stop_notification_listener()
 
     async def update_events(self, events):
         msg = self.format_request(
@@ -277,6 +343,7 @@ class EmotivaClient:
             {"protocol": "3.0"} if self._protocol_version == 3 else {}
         )
         await self._udp_send(msg)
+        _LOG.info(f"Sent command: {command} with value: {value}")
 
     async def power_on(self):
         await self.send_command("power_on")
@@ -393,6 +460,8 @@ class EmotivaClient:
 
     def handle_notification(self, data: bytes):
         decoded_data = data.decode("utf-8")
+        _LOG.debug(f"Handling notification: {decoded_data[:100]}...")
+        
         if "emotivaUnsubscribe" not in decoded_data:
             resp = self._parse_response(data)
             self._handle_status(resp)
@@ -428,7 +497,10 @@ class EmotivaClient:
                 self._muted = False
             
             if val:
+                old_value = self._current_state.get(elem.tag)
                 self._current_state[elem.tag] = val
+                if old_value != val:
+                    _LOG.info(f"State changed: {elem.tag} = {val}")
             
             if elem.tag.startswith("input_"):
                 num = elem.tag[6:]
@@ -511,4 +583,5 @@ class EmotivaClient:
         return self._current_state
 
     async def close(self):
+        await self.stop_notification_listener()
         await self.udp_disconnect()
