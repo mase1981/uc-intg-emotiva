@@ -68,7 +68,6 @@ class EmotivaMediaPlayer(MediaPlayer):
         _LOG.info(f"Created media player entity: {entity_id}")
 
     def _on_device_update(self):
-        """Handle device state updates."""
         _LOG.debug(f"Device update callback for {self.id}")
         
         try:
@@ -86,20 +85,21 @@ class EmotivaMediaPlayer(MediaPlayer):
                 ucapi.media_player.Attributes.VOLUME: volume,
                 ucapi.media_player.Attributes.MUTED: muted,
                 ucapi.media_player.Attributes.SOURCE: source,
+                ucapi.media_player.Attributes.SOURCE_LIST: list(self._client.sources),
                 ucapi.media_player.Attributes.SOUND_MODE: mode,
+                ucapi.media_player.Attributes.SOUND_MODE_LIST: list(self._client.available_modes),
             }
             
             self.attributes.update(new_attributes)
             
             if self._api and self._api.configured_entities.contains(self.id):
                 self._api.configured_entities.update_attributes(self.id, new_attributes)
-                _LOG.debug(f"Updated attributes for {self.id}")
+                _LOG.debug(f"Updated attributes for {self.id}: power={self._client.power}, source={source}, mode={mode}")
         
         except Exception as e:
             _LOG.error(f"Error in device update callback: {e}", exc_info=True)
 
     async def push_update(self):
-        """Push entity state update to remote."""
         try:
             await self._client.update_events(["power", "volume", "source", "mode"])
             self._on_device_update()

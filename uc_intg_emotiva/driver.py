@@ -69,6 +69,13 @@ async def _initialize_integration():
 
                 await client.udp_connect()
                 await client.subscribe_events()
+                
+                _LOG.info("Detecting capabilities for %s...", device_config.name)
+                capabilities = await client.detect_capabilities()
+                _LOG.info("Detected %d sources and %d modes for %s", 
+                         len(capabilities.get('sources', {})), 
+                         len(capabilities.get('modes', [])),
+                         device_config.name)
 
                 device_name = device_config.name
                 device_entity_id = device_config.device_id
@@ -275,11 +282,20 @@ async def on_subscribe_entities(entity_ids: List[str]):
     for entity_id in entity_ids:
         for media_player in media_players.values():
             if media_player.id == entity_id:
+                _LOG.info(f"Requesting initial state for media player: {entity_id}")
+                await media_player._client.update_events([
+                    "power", "volume", "source", "mode",
+                    "audio_input", "video_input"
+                ])
+                await asyncio.sleep(0.5)
                 await media_player.push_update()
                 break
         
         for remote in remotes.values():
             if remote.id == entity_id:
+                _LOG.info(f"Requesting initial state for remote: {entity_id}")
+                await remote._client.update_events(["power"])
+                await asyncio.sleep(0.3)
                 await remote.push_update()
                 break
 

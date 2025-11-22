@@ -9,7 +9,7 @@ import asyncio
 import logging
 import socket
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, List
 from lxml import etree
 
 from uc_intg_emotiva.config import DeviceConfig
@@ -32,19 +32,18 @@ class EmotivaClient:
         self._model = device_config.model
         
         self._udp_stream = None
-        self._notify_socket = None
-        self._notify_task = None
         self._notify_callback: Optional[Callable] = None
         self._current_state: Dict[str, Any] = {}
-        self._stop_notification_loop = False
         
         self._volume_max = 11
-        self._volume_min = -96
+        self._volume_min = -80
         self._volume_range = self._volume_max - self._volume_min
         self._muted = False
         
         self._modes = self._get_sound_modes_for_model(self._model)
         self._sources = self._get_available_sources()
+        self._detected_sources: Dict[str, str] = {}
+        self._detected_modes: List[str] = []
         
         self._notify_events = {
             "power", "zone2_power", "source", "mode", "volume",
@@ -193,6 +192,49 @@ class EmotivaClient:
         
         return devices
 
+    async def detect_capabilities(self) -> Dict[str, Any]:
+        _LOG.info(f"Detecting capabilities for {self._name}")
+        
+        capabilities = {
+            "sources": {},
+            "modes": [],
+            "has_tuner": False,
+            "max_inputs": 8,
+        }
+        
+        try:
+            await self.udp_connect()
+            
+            for i in range(1, 9):
+                await self.update_events([f"input_{i}"])
+            
+            await self.update_events(["mode"])
+            
+            await asyncio.sleep(2.0)
+            
+            for i in range(1, 9):
+                input_key = f"input_{i}"
+                if input_key in self._current_state and self._current_state[input_key]:
+                    input_name = self._current_state[input_key]
+                    if input_name and input_name.strip():
+                        source_cmd = f"source_{i}"
+                        capabilities["sources"][source_cmd] = input_name
+                        self._detected_sources[source_cmd] = input_name
+                        _LOG.debug(f"Detected source: {source_cmd} = {input_name}")
+            
+            for mode_name, mode_data in self._modes.items():
+                if mode_data[2]:
+                    capabilities["modes"].append(mode_name)
+                    self._detected_modes.append(mode_name)
+                    _LOG.debug(f"Detected mode: {mode_name}")
+            
+            _LOG.info(f"Capability detection complete: {len(capabilities['sources'])} sources, {len(capabilities['modes'])} modes")
+            
+        except Exception as e:
+            _LOG.error(f"Error detecting capabilities: {e}")
+        
+        return capabilities
+
     async def test_connection(self) -> bool:
         try:
             _LOG.info(f"Testing connection to {self._name} at {self._ip}")
@@ -246,65 +288,6 @@ class EmotivaClient:
             except Exception as reconnect_error:
                 _LOG.error(f"Reconnection failed: {reconnect_error}")
 
-    async def start_notification_listener(self):
-        """Start listening for notifications on UDP port 7003"""
-        try:
-            loop = asyncio.get_event_loop()
-            self._notify_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self._notify_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self._notify_socket.bind(("", self._notify_port))
-            self._notify_socket.setblocking(False)
-            
-            _LOG.info(f"Notification listener started on port {self._notify_port} for {self._name}")
-            
-            self._stop_notification_loop = False
-            self._notify_task = asyncio.create_task(self._notification_loop())
-            
-        except Exception as e:
-            _LOG.error(f"Failed to start notification listener: {e}")
-            raise
-
-    async def _notification_loop(self):
-        """Continuously receive and process notifications"""
-        _LOG.info(f"Notification loop started for {self._name}")
-        loop = asyncio.get_event_loop()
-        
-        while not self._stop_notification_loop:
-            try:
-                data, addr = await loop.sock_recvfrom(self._notify_socket, 4096)
-                
-                if addr[0] == self._ip:
-                    _LOG.debug(f"Received notification from {addr}: {len(data)} bytes")
-                    self.handle_notification(data)
-                    
-            except asyncio.CancelledError:
-                _LOG.info(f"Notification loop cancelled for {self._name}")
-                break
-            except Exception as e:
-                _LOG.error(f"Error in notification loop: {e}")
-                await asyncio.sleep(1)
-        
-        _LOG.info(f"Notification loop stopped for {self._name}")
-
-    async def stop_notification_listener(self):
-        """Stop the notification listener"""
-        _LOG.info(f"Stopping notification listener for {self._name}")
-        self._stop_notification_loop = True
-        
-        if self._notify_task:
-            self._notify_task.cancel()
-            try:
-                await self._notify_task
-            except asyncio.CancelledError:
-                pass
-            self._notify_task = None
-        
-        if self._notify_socket:
-            self._notify_socket.close()
-            self._notify_socket = None
-        
-        _LOG.info(f"Notification listener stopped for {self._name}")
-
     async def subscribe_events(self):
         _LOG.debug(f"Subscribing to events: {self._notify_events}")
         msg = self.format_request(
@@ -313,8 +296,6 @@ class EmotivaClient:
             {"protocol": "3.0"} if self._protocol_version == 3.0 else {}
         )
         await self._udp_send(msg)
-        
-        await self.start_notification_listener()
 
     async def unsubscribe_events(self):
         _LOG.debug(f"Unsubscribing from events: {self._all_events}")
@@ -325,8 +306,6 @@ class EmotivaClient:
         )
         await self._udp_send(msg)
         await asyncio.sleep(0.5)
-        
-        await self.stop_notification_listener()
 
     async def update_events(self, events):
         msg = self.format_request(
@@ -343,7 +322,6 @@ class EmotivaClient:
             {"protocol": "3.0"} if self._protocol_version == 3 else {}
         )
         await self._udp_send(msg)
-        _LOG.info(f"Sent command: {command} with value: {value}")
 
     async def power_on(self):
         await self.send_command("power_on")
@@ -385,6 +363,9 @@ class EmotivaClient:
         else:
             _LOG.error(f"Source '{source}' not found")
 
+    async def set_source_by_command(self, source_command: str):
+        await self.send_command(source_command)
+
     async def set_mode(self, mode: str):
         if mode not in self._modes:
             _LOG.error(f"Mode '{mode}' not found")
@@ -404,64 +385,20 @@ class EmotivaClient:
             await asyncio.sleep(0.25)
             await self.send_command("movie")
 
+    async def set_mode_by_command(self, mode_command: str):
+        await self.send_command(mode_command)
+
     async def input_next(self):
-        await self.send_command("input_next")
+        await self.send_command("input_up")
     
     async def input_previous(self):
-        await self.send_command("input_previous")
-    
-    async def menu(self):
-        await self.send_command("menu")
-    
-    async def back(self):
-        await self.send_command("back")
-    
-    async def exit_menu(self):
-        await self.send_command("exit")
-    
-    async def home(self):
-        await self.send_command("home")
-    
-    async def info(self):
-        await self.send_command("info")
-    
-    async def up(self):
-        await self.send_command("up")
-    
-    async def down(self):
-        await self.send_command("down")
-    
-    async def left(self):
-        await self.send_command("left")
-    
-    async def right(self):
-        await self.send_command("right")
-    
-    async def enter(self):
-        await self.send_command("enter")
-    
-    async def channel_up(self):
-        await self.send_command("channel_up")
-    
-    async def channel_down(self):
-        await self.send_command("channel_down")
-    
-    async def digit(self, number: int):
-        if 0 <= number <= 9:
-            await self.send_command(f"digit_{number}")
-    
-    async def function_button(self, color: str):
-        valid_colors = ["red", "green", "yellow", "blue"]
-        if color.lower() in valid_colors:
-            await self.send_command(color.lower())
+        await self.send_command("input_down")
 
     def set_notify_callback(self, callback: Callable):
         self._notify_callback = callback
 
     def handle_notification(self, data: bytes):
         decoded_data = data.decode("utf-8")
-        _LOG.debug(f"Handling notification: {decoded_data[:100]}...")
-        
         if "emotivaUnsubscribe" not in decoded_data:
             resp = self._parse_response(data)
             self._handle_status(resp)
@@ -497,14 +434,14 @@ class EmotivaClient:
                 self._muted = False
             
             if val:
-                old_value = self._current_state.get(elem.tag)
                 self._current_state[elem.tag] = val
-                if old_value != val:
-                    _LOG.info(f"State changed: {elem.tag} = {val}")
             
             if elem.tag.startswith("input_"):
                 num = elem.tag[6:]
-                self._sources[f"source_{num}"] = val
+                source_key = f"source_{num}"
+                self._sources[source_key] = val
+                if val and val.strip():
+                    self._detected_sources[source_key] = val
 
     @classmethod
     def _parse_response(cls, data):
@@ -571,6 +508,10 @@ class EmotivaClient:
         return tuple(self._sources.values())
 
     @property
+    def detected_sources(self):
+        return self._detected_sources
+
+    @property
     def mode(self):
         return self._current_state.get("mode", "")
 
@@ -579,9 +520,12 @@ class EmotivaClient:
         return tuple(mode for mode, data in self._modes.items() if data[2])
 
     @property
+    def detected_modes(self):
+        return self._detected_modes
+
+    @property
     def current_state(self):
         return self._current_state
 
     async def close(self):
-        await self.stop_notification_listener()
         await self.udp_disconnect()
