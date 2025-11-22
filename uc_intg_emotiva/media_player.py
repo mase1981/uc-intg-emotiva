@@ -46,7 +46,7 @@ class EmotivaMediaPlayer(MediaPlayer):
             ucapi.media_player.Attributes.SOURCE: "",
             ucapi.media_player.Attributes.SOURCE_LIST: list(client.sources),
             ucapi.media_player.Attributes.SOUND_MODE: "",
-            ucapi.media_player.Attributes.SOUND_MODE_LIST: list(client.available_modes),
+            ucapi.media_player.Attributes.SOUND_MODE_LIST: list(client.all_modes),
         }
         
         options = {
@@ -87,7 +87,7 @@ class EmotivaMediaPlayer(MediaPlayer):
                 ucapi.media_player.Attributes.SOURCE: source,
                 ucapi.media_player.Attributes.SOURCE_LIST: list(self._client.sources),
                 ucapi.media_player.Attributes.SOUND_MODE: mode,
-                ucapi.media_player.Attributes.SOUND_MODE_LIST: list(self._client.available_modes),
+                ucapi.media_player.Attributes.SOUND_MODE_LIST: list(self._client.all_modes),
             }
             
             self.attributes.update(new_attributes)

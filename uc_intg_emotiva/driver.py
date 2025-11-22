@@ -68,6 +68,9 @@ async def _initialize_integration():
                     continue
 
                 await client.udp_connect()
+                
+                await client.start_notification_listener()
+                
                 await client.subscribe_events()
                 
                 _LOG.info("Detecting capabilities for %s...", device_config.name)
@@ -94,7 +97,7 @@ async def _initialize_integration():
                 remotes[device_config.device_id] = remote_entity
 
                 connected_devices += 1
-                _LOG.info("Successfully setup device: %s", device_config.name)
+                _LOG.info("Successfully setup device: %s with notification listener active", device_config.name)
 
             except Exception as e:
                 _LOG.error("Failed to setup device %s: %s", device_config.name, e, exc_info=True)
