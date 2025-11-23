@@ -9,7 +9,7 @@ import asyncio
 import logging
 import socket
 import time
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional, List
 from lxml import etree
 
 from uc_intg_emotiva.config import DeviceConfig
@@ -32,16 +32,21 @@ class EmotivaClient:
         self._model = device_config.model
         
         self._udp_stream = None
+        self._notify_socket = None
+        self._notify_task = None
         self._notify_callback: Optional[Callable] = None
         self._current_state: Dict[str, Any] = {}
+        self._running = False
         
         self._volume_max = 11
-        self._volume_min = -96
+        self._volume_min = -80
         self._volume_range = self._volume_max - self._volume_min
         self._muted = False
         
         self._modes = self._get_sound_modes_for_model(self._model)
         self._sources = self._get_available_sources()
+        self._detected_sources: Dict[str, str] = {}
+        self._detected_modes: List[str] = []
         
         self._notify_events = {
             "power", "zone2_power", "source", "mode", "volume",
@@ -72,57 +77,57 @@ class EmotivaClient:
         
         if stripped_model == "XMC1":
             return {
-                "Stereo": ["stereo", "mode_stereo", False],
-                "Direct": ["direct", "mode_direct", False],
-                "Dolby": ["dolby", "mode_dolby", False],
-                "DTS": ["dts", "mode_dts", False],
-                "All Stereo": ["all_stereo", "mode_all_stereo", False],
-                "Auto": ["auto", "mode_auto", False],
-                "Reference Stereo": ["reference_stereo", "mode_ref_stereo", False],
-                "Surround": ["surround_mode", "mode_surround", False],
-                "PLIIx Music": ["dolby", "mode_dolby", False],
-                "PLIIx Movie": ["dolby", "mode_dolby", False],
-                "dts Neo:6 Cinema": ["dts", "mode_dts", False],
-                "dts Neo:6 Music": ["dts", "mode_dts", False],
+                "Stereo": ["stereo", "mode_stereo", True],
+                "Direct": ["direct", "mode_direct", True],
+                "Dolby": ["dolby", "mode_dolby", True],
+                "DTS": ["dts", "mode_dts", True],
+                "All Stereo": ["all_stereo", "mode_all_stereo", True],
+                "Auto": ["auto", "mode_auto", True],
+                "Reference Stereo": ["reference_stereo", "mode_ref_stereo", True],
+                "Surround": ["surround_mode", "mode_surround", True],
+                "PLIIx Music": ["dolby", "mode_dolby", True],
+                "PLIIx Movie": ["dolby", "mode_dolby", True],
+                "dts Neo:6 Cinema": ["dts", "mode_dts", True],
+                "dts Neo:6 Music": ["dts", "mode_dts", True],
             }
         elif stripped_model == "XMC2":
             return {
-                "Stereo": ["stereo", "mode_stereo", False],
-                "Direct": ["direct", "mode_direct", False],
-                "Dolby": ["dolby", "mode_dolby", False],
-                "DTS": ["dts", "mode_dts", False],
-                "All Stereo": ["all_stereo", "mode_all_stereo", False],
-                "Auto": ["auto", "mode_auto", False],
-                "Reference Stereo": ["reference_stereo", "mode_ref_stereo", False],
-                "Surround": ["surround_mode", "mode_surround", False],
-                "Dolby ATMOS": ["dolby", "mode_dolby", False],
-                "dts Neural:X": ["dts", "mode_dts", False],
-                "Dolby Surround": ["dolby", "mode_dolby", False],
+                "Stereo": ["stereo", "mode_stereo", True],
+                "Direct": ["direct", "mode_direct", True],
+                "Dolby": ["dolby", "mode_dolby", True],
+                "DTS": ["dts", "mode_dts", True],
+                "All Stereo": ["all_stereo", "mode_all_stereo", True],
+                "Auto": ["auto", "mode_auto", True],
+                "Reference Stereo": ["reference_stereo", "mode_ref_stereo", True],
+                "Surround": ["surround_mode", "mode_surround", True],
+                "Dolby ATMOS": ["dolby", "mode_dolby", True],
+                "dts Neural:X": ["dts", "mode_dts", True],
+                "Dolby Surround": ["dolby", "mode_dolby", True],
             }
         elif stripped_model in ["RMC1", "RMC1L"]:
             return {
-                "Stereo": ["stereo", "mode_stereo", False],
-                "Direct": ["direct", "mode_direct", False],
-                "Dolby": ["dolby", "mode_dolby", False],
-                "DTS": ["dts", "mode_dts", False],
-                "All Stereo": ["all_stereo", "mode_all_stereo", False],
-                "Auto": ["auto", "mode_auto", False],
-                "Reference Stereo": ["reference_stereo", "mode_ref_stereo", False],
-                "Surround": ["surround_mode", "mode_surround", False],
-                "Dolby Surround": ["dolby", "mode_dolby", False],
-                "Dolby ATMOS": ["dolby", "mode_dolby", False],
-                "dts Neural:X": ["dts", "mode_dts", False],
+                "Stereo": ["stereo", "mode_stereo", True],
+                "Direct": ["direct", "mode_direct", True],
+                "Dolby": ["dolby", "mode_dolby", True],
+                "DTS": ["dts", "mode_dts", True],
+                "All Stereo": ["all_stereo", "mode_all_stereo", True],
+                "Auto": ["auto", "mode_auto", True],
+                "Reference Stereo": ["reference_stereo", "mode_ref_stereo", True],
+                "Surround": ["surround_mode", "mode_surround", True],
+                "Dolby Surround": ["dolby", "mode_dolby", True],
+                "Dolby ATMOS": ["dolby", "mode_dolby", True],
+                "dts Neural:X": ["dts", "mode_dts", True],
             }
         else:
             return {
-                "Stereo": ["stereo", "mode_stereo", False],
-                "Direct": ["direct", "mode_direct", False],
-                "Dolby": ["dolby", "mode_dolby", False],
-                "DTS": ["dts", "mode_dts", False],
-                "All Stereo": ["all_stereo", "mode_all_stereo", False],
-                "Auto": ["auto", "mode_auto", False],
-                "Reference Stereo": ["reference_stereo", "mode_ref_stereo", False],
-                "Surround": ["surround_mode", "mode_surround", False],
+                "Stereo": ["stereo", "mode_stereo", True],
+                "Direct": ["direct", "mode_direct", True],
+                "Dolby": ["dolby", "mode_dolby", True],
+                "DTS": ["dts", "mode_dts", True],
+                "All Stereo": ["all_stereo", "mode_all_stereo", True],
+                "Auto": ["auto", "mode_auto", True],
+                "Reference Stereo": ["reference_stereo", "mode_ref_stereo", True],
+                "Surround": ["surround_mode", "mode_surround", True],
             }
 
     def _get_available_sources(self) -> Dict[str, str]:
@@ -190,6 +195,47 @@ class EmotivaClient:
         
         return devices
 
+    async def detect_capabilities(self) -> Dict[str, Any]:
+        _LOG.info(f"Detecting capabilities for {self._name}")
+        
+        capabilities = {
+            "sources": {},
+            "modes": [],
+            "has_tuner": False,
+            "max_inputs": 8,
+        }
+        
+        try:
+            for i in range(1, 9):
+                await self.update_events([f"input_{i}"])
+            
+            await self.update_events(["mode"])
+            
+            await asyncio.sleep(2.0)
+            
+            for i in range(1, 9):
+                input_key = f"input_{i}"
+                if input_key in self._current_state and self._current_state[input_key]:
+                    input_name = self._current_state[input_key]
+                    if input_name and input_name.strip():
+                        source_cmd = f"source_{i}"
+                        capabilities["sources"][source_cmd] = input_name
+                        self._detected_sources[source_cmd] = input_name
+                        _LOG.debug(f"Detected source: {source_cmd} = {input_name}")
+            
+            for mode_name, mode_data in self._modes.items():
+                if mode_data[2]:
+                    capabilities["modes"].append(mode_name)
+                    self._detected_modes.append(mode_name)
+                    _LOG.debug(f"Detected mode: {mode_name}")
+            
+            _LOG.info(f"Capability detection complete: {len(capabilities['sources'])} sources, {len(capabilities['modes'])} modes")
+            
+        except Exception as e:
+            _LOG.error(f"Error detecting capabilities: {e}")
+        
+        return capabilities
+
     async def test_connection(self) -> bool:
         try:
             _LOG.info(f"Testing connection to {self._name} at {self._ip}")
@@ -215,17 +261,73 @@ class EmotivaClient:
         try:
             import asyncio_datagram
             self._udp_stream = await asyncio_datagram.connect((self._ip, self._control_port))
-            _LOG.debug(f"UDP connection established to {self._ip}:{self._control_port}")
+            _LOG.debug(f"UDP control connection established to {self._ip}:{self._control_port}")
         except Exception as e:
-            _LOG.error(f"Cannot connect UDP socket: {e}")
+            _LOG.error(f"Cannot connect UDP control socket: {e}")
             raise
+
+    async def start_notification_listener(self):
+        try:
+            self._notify_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self._notify_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._notify_socket.bind(("", self._notify_port))
+            self._notify_socket.setblocking(False)
+            
+            _LOG.info(f"Notification listener bound to port {self._notify_port}")
+            
+            self._running = True
+            self._notify_task = asyncio.create_task(self._notification_listener_loop())
+            
+        except Exception as e:
+            _LOG.error(f"Cannot start notification listener: {e}")
+            raise
+
+    async def _notification_listener_loop(self):
+        _LOG.info(f"Notification listener started for {self._name}")
+        
+        while self._running:
+            try:
+                loop = asyncio.get_event_loop()
+                data, addr = await loop.sock_recvfrom(self._notify_socket, 4096)
+                
+                if data:
+                    _LOG.debug(f"Received notification from {addr}: {len(data)} bytes")
+                    self.handle_notification(data)
+                    
+            except asyncio.CancelledError:
+                _LOG.info("Notification listener task cancelled")
+                break
+            except Exception as e:
+                if self._running:
+                    _LOG.debug(f"Notification listener error: {e}")
+                await asyncio.sleep(0.1)
+        
+        _LOG.info(f"Notification listener stopped for {self._name}")
+
+    async def stop_notification_listener(self):
+        self._running = False
+        
+        if self._notify_task:
+            self._notify_task.cancel()
+            try:
+                await self._notify_task
+            except asyncio.CancelledError:
+                pass
+            self._notify_task = None
+        
+        if self._notify_socket:
+            try:
+                self._notify_socket.close()
+            except Exception as e:
+                _LOG.debug(f"Error closing notification socket: {e}")
+            self._notify_socket = None
 
     async def udp_disconnect(self):
         try:
             if self._udp_stream:
                 self._udp_stream.close()
                 self._udp_stream = None
-                _LOG.debug(f"UDP connection closed for {self._ip}")
+                _LOG.debug(f"UDP control connection closed for {self._ip}")
         except Exception as e:
             _LOG.error(f"Cannot disconnect UDP socket: {e}")
 
@@ -318,6 +420,9 @@ class EmotivaClient:
         else:
             _LOG.error(f"Source '{source}' not found")
 
+    async def set_source_by_command(self, source_command: str):
+        await self.send_command(source_command)
+
     async def set_mode(self, mode: str):
         if mode not in self._modes:
             _LOG.error(f"Mode '{mode}' not found")
@@ -336,6 +441,15 @@ class EmotivaClient:
         elif "Movie" in mode or "Cinema" in mode or "cinema" in mode.lower():
             await asyncio.sleep(0.25)
             await self.send_command("movie")
+
+    async def set_mode_by_command(self, mode_command: str):
+        await self.send_command(mode_command)
+
+    async def input_next(self):
+        await self.send_command("input_up")
+    
+    async def input_previous(self):
+        await self.send_command("input_down")
 
     def set_notify_callback(self, callback: Callable):
         self._notify_callback = callback
@@ -381,7 +495,10 @@ class EmotivaClient:
             
             if elem.tag.startswith("input_"):
                 num = elem.tag[6:]
-                self._sources[f"source_{num}"] = val
+                source_key = f"source_{num}"
+                self._sources[source_key] = val
+                if val and val.strip():
+                    self._detected_sources[source_key] = val
 
     @classmethod
     def _parse_response(cls, data):
@@ -448,6 +565,10 @@ class EmotivaClient:
         return tuple(self._sources.values())
 
     @property
+    def detected_sources(self):
+        return self._detected_sources
+
+    @property
     def mode(self):
         return self._current_state.get("mode", "")
 
@@ -456,8 +577,17 @@ class EmotivaClient:
         return tuple(mode for mode, data in self._modes.items() if data[2])
 
     @property
+    def all_modes(self):
+        return tuple(self._modes.keys())
+
+    @property
+    def detected_modes(self):
+        return self._detected_modes
+
+    @property
     def current_state(self):
         return self._current_state
 
     async def close(self):
+        await self.stop_notification_listener()
         await self.udp_disconnect()

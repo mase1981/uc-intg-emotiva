@@ -37,16 +37,7 @@ class EmotivaRemote(Remote):
             ucapi.remote.Attributes.STATE: ucapi.remote.States.OFF,
         }
         
-        simple_commands = [
-            "power_on", "power_off", "power_toggle",
-            "volume_up", "volume_down", "mute",
-            "menu", "back", "home", "info",
-            "cursor_up", "cursor_down", "cursor_left", "cursor_right", "cursor_enter",
-            "channel_up", "channel_down",
-            "digit_0", "digit_1", "digit_2", "digit_3", "digit_4",
-            "digit_5", "digit_6", "digit_7", "digit_8", "digit_9",
-            "function_red", "function_green", "function_yellow", "function_blue",
-        ]
+        simple_commands = self._build_command_list()
         
         super().__init__(
             entity_id,
@@ -59,10 +50,49 @@ class EmotivaRemote(Remote):
         
         self._client.set_notify_callback(self._on_device_update)
         
-        _LOG.info(f"Created remote entity: {entity_id}")
+        _LOG.info(f"Created remote entity: {entity_id} with {len(simple_commands)} commands")
+
+    def _build_command_list(self) -> list:
+        commands = [
+            "power_on",
+            "power_off",
+            "volume_up",
+            "volume_down",
+            "mute",
+            "menu",
+            "info",
+            "up",
+            "down",
+            "left",
+            "right",
+            "enter",
+            "input_up",
+            "input_down",
+        ]
+        
+        detected_sources = self._client.detected_sources
+        if detected_sources:
+            _LOG.info(f"Adding {len(detected_sources)} source buttons to remote")
+            for source_cmd, source_name in detected_sources.items():
+                safe_cmd = f"source_{source_name.lower().replace(' ', '_').replace('-', '_')}"
+                commands.append(safe_cmd)
+                _LOG.debug(f"Added source button: {safe_cmd} -> {source_cmd}")
+        else:
+            for i in range(1, 9):
+                commands.append(f"source_{i}")
+        
+        detected_modes = self._client.detected_modes
+        if detected_modes:
+            _LOG.info(f"Adding {len(detected_modes)} mode buttons to remote")
+            for mode_name in detected_modes:
+                safe_cmd = f"mode_{mode_name.lower().replace(' ', '_').replace('-', '_').replace(':', '')}"
+                commands.append(safe_cmd)
+                _LOG.debug(f"Added mode button: {safe_cmd}")
+        
+        _LOG.info(f"Built command list with {len(commands)} total commands")
+        return commands
 
     def _on_device_update(self):
-        """Handle device state updates."""
         _LOG.debug(f"Remote update callback for {self.id}")
         
         try:
@@ -82,7 +112,6 @@ class EmotivaRemote(Remote):
             _LOG.error(f"Error in remote update callback: {e}", exc_info=True)
 
     async def push_update(self):
-        """Push entity state update to remote."""
         try:
             await self._client.update_events(["power"])
             self._on_device_update()
@@ -129,47 +158,65 @@ class EmotivaRemote(Remote):
             return StatusCodes.SERVER_ERROR
 
     async def _handle_simple_command(self, command: str) -> None:
+        if command.startswith("source_"):
+            await self._handle_source_command(command)
+        elif command.startswith("mode_"):
+            await self._handle_mode_command(command)
+        else:
+            await self._handle_basic_command(command)
+
+    async def _handle_source_command(self, command: str) -> None:
+        detected_sources = self._client.detected_sources
+        
+        if detected_sources:
+            for source_cmd, source_name in detected_sources.items():
+                safe_cmd = f"source_{source_name.lower().replace(' ', '_').replace('-', '_')}"
+                if command == safe_cmd:
+                    _LOG.info(f"Switching to source: {source_name} ({source_cmd})")
+                    await self._client.set_source_by_command(source_cmd)
+                    return
+        
+        if command in ["source_1", "source_2", "source_3", "source_4", 
+                       "source_5", "source_6", "source_7", "source_8"]:
+            _LOG.info(f"Direct source selection: {command}")
+            await self._client.set_source_by_command(command)
+        else:
+            _LOG.warning(f"Unknown source command: {command}")
+
+    async def _handle_mode_command(self, command: str) -> None:
+        detected_modes = self._client.detected_modes
+        
+        for mode_name in detected_modes:
+            safe_cmd = f"mode_{mode_name.lower().replace(' ', '_').replace('-', '_').replace(':', '')}"
+            if command == safe_cmd:
+                _LOG.info(f"Setting audio mode: {mode_name}")
+                await self._client.set_mode(mode_name)
+                return
+        
+        _LOG.warning(f"Unknown mode command: {command}")
+
+    async def _handle_basic_command(self, command: str) -> None:
         command_map = {
             "power_on": "power_on",
             "power_off": "power_off",
-            "power_toggle": None,
             "volume_up": "volume",
             "volume_down": "volume",
             "mute": "mute",
             "menu": "menu",
-            "back": "back",
-            "home": "home",
             "info": "info",
-            "cursor_up": "up",
-            "cursor_down": "down",
-            "cursor_left": "left",
-            "cursor_right": "right",
-            "cursor_enter": "enter",
-            "channel_up": "channel_up",
-            "channel_down": "channel_down",
-            "digit_0": "digit_0",
-            "digit_1": "digit_1",
-            "digit_2": "digit_2",
-            "digit_3": "digit_3",
-            "digit_4": "digit_4",
-            "digit_5": "digit_5",
-            "digit_6": "digit_6",
-            "digit_7": "digit_7",
-            "digit_8": "digit_8",
-            "digit_9": "digit_9",
-            "function_red": "red",
-            "function_green": "green",
-            "function_yellow": "yellow",
-            "function_blue": "blue",
+            "up": "up",
+            "down": "down",
+            "left": "left",
+            "right": "right",
+            "enter": "enter",
+            "input_up": "input_up",
+            "input_down": "input_down",
         }
         
         emotiva_cmd = command_map.get(command)
         
         if emotiva_cmd is None:
-            if command == "power_toggle":
-                await self._client.power_toggle()
-            else:
-                _LOG.warning(f"Unknown simple command: {command}")
+            _LOG.warning(f"Unknown basic command: {command}")
         elif command == "volume_up":
             await self._client.send_command("volume", "1")
         elif command == "volume_down":
