@@ -71,7 +71,8 @@ class EmotivaMediaPlayer(MediaPlayer):
         _LOG.debug(f"Device update callback for {self.id}")
         
         try:
-            state = ucapi.media_player.States.ON if self._client.power else ucapi.media_player.States.OFF
+            power_state = self._client.power
+            state = ucapi.media_player.States.ON if power_state else ucapi.media_player.States.OFF
             
             volume_level = self._client.volume_level
             volume = int(volume_level * 100) if volume_level is not None else 0
@@ -94,7 +95,7 @@ class EmotivaMediaPlayer(MediaPlayer):
             
             if self._api and self._api.configured_entities.contains(self.id):
                 self._api.configured_entities.update_attributes(self.id, new_attributes)
-                _LOG.debug(f"Updated attributes for {self.id}: power={self._client.power}, source={source}, mode={mode}")
+                _LOG.info(f"Media player state updated: power={power_state}, volume={volume}, muted={muted}, source={source}, mode={mode}")
         
         except Exception as e:
             _LOG.error(f"Error in device update callback: {e}", exc_info=True)

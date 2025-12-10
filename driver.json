@@ -1,6 +1,6 @@
 {
   "driver_id": "emotiva",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "min_core_api": "1.0.0",
   "name": {
     "en": "Emotiva Processor"

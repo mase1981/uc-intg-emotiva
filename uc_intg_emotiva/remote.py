@@ -89,6 +89,16 @@ class EmotivaRemote(Remote):
                 commands.append(safe_cmd)
                 _LOG.debug(f"Added mode button: {safe_cmd}")
         
+        trim_channels = self._client.trim_channels
+        if trim_channels:
+            _LOG.info(f"Adding {len(trim_channels)} trim channels to remote")
+            for channel_cmd, channel_name in trim_channels.items():
+                up_cmd = f"trim_{channel_cmd}_up"
+                down_cmd = f"trim_{channel_cmd}_down"
+                commands.append(up_cmd)
+                commands.append(down_cmd)
+                _LOG.debug(f"Added trim buttons: {up_cmd}, {down_cmd}")
+        
         _LOG.info(f"Built command list with {len(commands)} total commands")
         return commands
 
@@ -106,7 +116,7 @@ class EmotivaRemote(Remote):
             
             if self._api and self._api.configured_entities.contains(self.id):
                 self._api.configured_entities.update_attributes(self.id, new_attributes)
-                _LOG.debug(f"Updated remote attributes for {self.id}")
+                _LOG.info(f"Updated remote state: power={self._client.power}")
         
         except Exception as e:
             _LOG.error(f"Error in remote update callback: {e}", exc_info=True)
@@ -162,6 +172,8 @@ class EmotivaRemote(Remote):
             await self._handle_source_command(command)
         elif command.startswith("mode_"):
             await self._handle_mode_command(command)
+        elif command.startswith("trim_"):
+            await self._handle_trim_command(command)
         else:
             await self._handle_basic_command(command)
 
@@ -194,6 +206,24 @@ class EmotivaRemote(Remote):
                 return
         
         _LOG.warning(f"Unknown mode command: {command}")
+
+    async def _handle_trim_command(self, command: str) -> None:
+        trim_channels = self._client.trim_channels
+        
+        for channel_cmd, channel_name in trim_channels.items():
+            up_cmd = f"trim_{channel_cmd}_up"
+            down_cmd = f"trim_{channel_cmd}_down"
+            
+            if command == up_cmd:
+                _LOG.info(f"Trim up: {channel_name}")
+                await self._client.trim_up(channel_cmd)
+                return
+            elif command == down_cmd:
+                _LOG.info(f"Trim down: {channel_name}")
+                await self._client.trim_down(channel_cmd)
+                return
+        
+        _LOG.warning(f"Unknown trim command: {command}")
 
     async def _handle_basic_command(self, command: str) -> None:
         command_map = {
