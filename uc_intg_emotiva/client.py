@@ -47,11 +47,13 @@ class EmotivaClient:
         self._sources = self._get_available_sources()
         self._detected_sources: Dict[str, str] = {}
         self._detected_modes: List[str] = []
+        self._trim_channels = self._get_trim_channels_for_model(self._model)
         
         self._notify_events = {
             "power", "zone2_power", "source", "mode", "volume",
             "audio_input", "audio_bits", "audio_bitstream",
-            "video_input", "video_format", "video_space"
+            "video_input", "video_format", "video_space",
+            "center", "subwoofer", "surround", "back", "width", "height"
         }
         
         for i in range(1, 9):
@@ -59,7 +61,7 @@ class EmotivaClient:
         
         self._all_events = {
             "power", "source", "dim", "mode", "speaker_preset",
-            "center", "subwoofer", "surround", "back", "volume",
+            "center", "subwoofer", "surround", "back", "width", "height", "volume",
             "loudness", "treble", "bass", "zone2_power", "zone2_volume",
             "zone2_input", "tuner_band", "tuner_channel", "tuner_signal",
             "tuner_program", "tuner_RDS", "audio_input", "audio_bitstream",
@@ -145,6 +147,42 @@ class EmotivaClient:
             "source_tuner": "Tuner", "usb_stream": "USB Stream",
         }
 
+    def _get_trim_channels_for_model(self, model: str) -> Dict[str, str]:
+        stripped_model = model.replace(" ", "").replace("-", "").replace("_", "").upper()[:4]
+        
+        if stripped_model == "XMC1":
+            return {
+                "center": "Center",
+                "subwoofer": "Subwoofer",
+                "surround": "Surround",
+                "back": "Back"
+            }
+        elif stripped_model == "XMC2":
+            return {
+                "center": "Center",
+                "subwoofer": "Subwoofer",
+                "surround": "Surround",
+                "back": "Back",
+                "width": "Width",
+                "height": "Height"
+            }
+        elif stripped_model in ["RMC1", "RMC1L"]:
+            return {
+                "center": "Center",
+                "subwoofer": "Subwoofer",
+                "surround": "Surround",
+                "back": "Back",
+                "width": "Width",
+                "height": "Height"
+            }
+        else:
+            return {
+                "center": "Center",
+                "subwoofer": "Subwoofer",
+                "surround": "Surround",
+                "back": "Back"
+            }
+
     @classmethod
     async def discover(cls, timeout: int = 3) -> list:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -201,6 +239,7 @@ class EmotivaClient:
         capabilities = {
             "sources": {},
             "modes": [],
+            "trims": list(self._trim_channels.keys()),
             "has_tuner": False,
             "max_inputs": 8,
         }
@@ -229,7 +268,7 @@ class EmotivaClient:
                     self._detected_modes.append(mode_name)
                     _LOG.debug(f"Detected mode: {mode_name}")
             
-            _LOG.info(f"Capability detection complete: {len(capabilities['sources'])} sources, {len(capabilities['modes'])} modes")
+            _LOG.info(f"Capability detection complete: {len(capabilities['sources'])} sources, {len(capabilities['modes'])} modes, {len(capabilities['trims'])} trims")
             
         except Exception as e:
             _LOG.error(f"Error detecting capabilities: {e}")
@@ -445,6 +484,15 @@ class EmotivaClient:
     async def set_mode_by_command(self, mode_command: str):
         await self.send_command(mode_command)
 
+    async def trim_up(self, channel: str):
+        await self.send_command(channel, "1")
+
+    async def trim_down(self, channel: str):
+        await self.send_command(channel, "-1")
+
+    async def set_trim(self, channel: str, value: float):
+        await self.send_command(f"set_{channel}", str(value))
+
     async def input_next(self):
         await self.send_command("input_up")
     
@@ -492,6 +540,7 @@ class EmotivaClient:
             
             if val:
                 self._current_state[elem.tag] = val
+                _LOG.info(f"State updated: {elem.tag} = {val}")
             
             if elem.tag.startswith("input_"):
                 num = elem.tag[6:]
@@ -583,6 +632,10 @@ class EmotivaClient:
     @property
     def detected_modes(self):
         return self._detected_modes
+
+    @property
+    def trim_channels(self):
+        return self._trim_channels
 
     @property
     def current_state(self):
